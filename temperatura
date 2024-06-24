@@ -1,0 +1,273 @@
+#include <WiFiManager.h>  
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <ESP32Servo.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include "DHT.h"
+
+#define DHTPIN 4
+#define DHTTYPE DHT11
+#define I2C_ADDR 0x27
+
+const int ledPinSDA = 16;
+const int ledPinSCL = 17;
+
+const char *MQTT_BROKER_HOST = "a1wwxy8igchsca-ats.iot.us-east-2.amazonaws.com";
+const int MQTT_BROKER_PORT = 8883;
+
+const char *MQTT_CLIENT_ID = "ESP-32";
+
+const char *UPDATE_TOPIC = "$aws/things/objetoBonito4YaValio/shadow/update";
+const char *UPDATE_DELTA_TOPIC = "$aws/things/objetoBonito4YaValio/shadow/update/accepted";
+
+const char AMAZON_ROOT_CA1[] PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF
+ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6
+b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL
+MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv
+b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj
+ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM
+9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw
+IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6
+VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L
+93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm
+jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC
+AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA
+A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI
+U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs
+N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv
+o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU
+5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy
+rqXRfboQnoZsG4q5WTP468SQvvG5
+-----END CERTIFICATE-----
+)EOF";
+
+const char CERTIFICATE[] PROGMEM = R"KEY(
+-----BEGIN CERTIFICATE-----
+MIIDWjCCAkKgAwIBAgIVAISI3ojMIFmEWn+dh0hnXUGSHjSCMA0GCSqGSIb3DQEB
+CwUAME0xSzBJBgNVBAsMQkFtYXpvbiBXZWIgU2VydmljZXMgTz1BbWF6b24uY29t
+IEluYy4gTD1TZWF0dGxlIFNUPVdhc2hpbmd0b24gQz1VUzAeFw0yNDA0MTYwMDQz
+MDBaFw00OTEyMzEyMzU5NTlaMB4xHDAaBgNVBAMME0FXUyBJb1QgQ2VydGlmaWNh
+dGUwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDBWa1ZVhZL17xZz1To
+hZFBaDfXCqE4zjh/gLUalseuqb2GHm/wA/3oE/jUqSucNmN+90KOz3lN53vfOhy2
+6uo5x2c9xqd7NMqa1eELi8cp50rvcJBqlWi6Xe3BK6QnrvTU9HGH7pYb/0lUnmec
+M/jRVnzaEYJiX0J8Zuv19KJqAG+hUJMbulMCzRw8CjMHQ6b8YjTeB8wJCJw9yVG4
+iF4qqcWtRKGVdKmfcNOFFAr60tj09svdxjw1XVwCT7P7KLabDJlV0wYFtK2a7y7A
+9JJj5No3lfdke/+aM1KXh2iHiJJD8fsa2HC7jmPELI3+Cvn927Ngpn/kJ73q7DtB
+HleVAgMBAAGjYDBeMB8GA1UdIwQYMBaAFIHAOvsU0HhiS/au3V8AjxkMPDWsMB0G
+A1UdDgQWBBRLIlojRyJKIv2ppRaCi7pO7shkzzAMBgNVHRMBAf8EAjAAMA4GA1Ud
+DwEB/wQEAwIHgDANBgkqhkiG9w0BAQsFAAOCAQEAVopITHJBFhfz0AlxvDhWCeeB
+OlzKWrLCDQoZsjcb+mg2dFjw25v53HzMi+XuGC2D/+jH1YBGOfkq7XPi/eUL9nFd
+5QZnRj/pLUKsaJX+ji3M27nHSLRA4prgbwB/ir+TZDnZ2aGUgxn57hFsEZH1LPzm
+oiWVxEBXMXhIEdXvF7Nh1XnXno0OH93vqggFu/uzfWnG4mtMD4v1X/SEUfb6r9MW
+wTekK1BSbJFZibEM2NYcHPv22INnuy1BYDDtpuYoYT53kLrhyxId2oMDqlS1bZET
+nFPEY4PF3qnyMhWqvQLqvKDMQSD+ywH4yBtbsBrUJr2vw35dkXPcQ/XjE4p40g==
+-----END CERTIFICATE-----
+)KEY";
+
+const char PRIVATE_KEY[] PROGMEM = R"KEY(
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAwVmtWVYWS9e8Wc9U6IWRQWg31wqhOM44f4C1GpbHrqm9hh5v
+8AP96BP41KkrnDZjfvdCjs95Ted73zocturqOcdnPcanezTKmtXhC4vHKedK73CQ
+apVoul3twSukJ6701PRxh+6WG/9JVJ5nnDP40VZ82hGCYl9CfGbr9fSiagBvoVCT
+G7pTAs0cPAozB0Om/GI03gfMCQicPclRuIheKqnFrUShlXSpn3DThRQK+tLY9PbL
+3cY8NV1cAk+z+yi2mwyZVdMGBbStmu8uwPSSY+TaN5X3ZHv/mjNSl4doh4iSQ/H7
+Gthwu45jxCyN/gr5/duzYKZ/5Ce96uw7QR5XlQIDAQABAoIBAQCeu2uH+xfE3fDg
+Xkkbt4PfiZrGLRDcnNhfPJ/xmzWFnA5ezCAjkHNjkvnmRJfr3+7g7kczDPtOTKsy
+QPgP512xX5XPboZSrK1kXhAqNW+lZB/t4KB/D/fxgGlO+/ABMC4JokCOUv3jMDrY
+gE8ZOsWbvoAzWsqKzh+8F5bBzjuD/zesPnT+CjO5tOtR3Mxfm/XsOLgf5NIuC53O
+bHkHW7xE4drwZ4/ApQ8q9kDJxBPeRHi9RspnAidtpj2kv6ajhVTEQXn3YNgOuSAy
+Kk9VG2GuTanwAxnaltndJhLg/l6FksJDgh8K6BD5USdD/Ad5TzYv8hmUlATBkDm5
+em2H0B0BAoGBAOxuF1SLOwAnpWDurxBDnHSDdECyrGLckrZ/5a5fBMhQyY4mdE2V
+9GaI1MOEb2t59zdDuJzCb1v4PExSeq9vYLTTcofEN9yXLwHVo4C7y4v7chLdw5BP
+p4GlP7UmiMDsYUPY1fo1MxsQwqZ/cCZc1Maxzwmul6EEyvkrjmxz/BnVAoGBANFa
+u/efov8Jr7Qm249+kZVV1eGDw0ef/PdezVII2Kg8+hjYXEb/eS7SzzkIEPsiGBGm
+0L1f+h/NnELnL7lsoVFGdNNwLm19JwX0TaDS72Qk4H/UI137CHUzsmyVvFCZiNHP
+4Rwh3SNggwX2SuN+5w56aABonmWlzIooX0hktGbBAoGAMsiu8DT71luttTVvmwG6
+0HgP93mpd47DYLn2Hs9AGrrnoEX4Q1YLah7H/Lssp5xKEq/ULq/A9bNLWGV6/sXg
+stacSjdGfHZo3W8DMLqlzQqUhSLnR88kPr+9AG8nfrEHb2hbBeR5dr3R4auL7mGQ
+PqGgxAahgS+jXYQSko8TPoUCgYAlb4sjGWmlH09K8JPcUe6ofIPVYqFdwm8SsOIY
+JDrRwq2aGb5Od8pspAeoFBgtQAh7x4+V/X6Vh0fE8uAm0RT7mpSzZmD29SUwPGJR
+OsbR6oI2eXGlkYkOpCLopdHZu8qqcfi39ho8BDsJquPzUDLy9NJ6GDsSxBYSMmvv
+XwqfQQKBgQCzRc+vkQs/V8tf43RAVTDknDPlh726AMZch9iL050LD/xq0rd5/VDI
+dVKkLooQ/XrP7E0z4xTC80osVMf9Q1rI+aC0AuHHfK9QJeeEZ22VABhyev4xQYTV
+7sms3KGBqkB2AfDXqLQR3nIKhyr6AVn9YUw/TT/2oyQFQ3akeXOn/g==
+-----END RSA PRIVATE KEY-----
+)KEY";
+
+StaticJsonDocument<JSON_OBJECT_SIZE(64)> inputDoc;
+StaticJsonDocument<JSON_OBJECT_SIZE(4)> outputDoc;
+char outputBuffer[128];
+
+unsigned char temperaturaAws = 0;
+
+class SensorTemperatura {
+  private:
+    DHT dht;
+
+  public:
+    SensorTemperatura(int pin, int type) : dht(pin, type) {}
+
+    void begin() {
+      dht.begin();
+    }
+
+    float leerTemperatura() {
+      return dht.readTemperature();
+    }
+
+    float leerHumedad() {
+      return dht.readHumidity();
+    }
+};
+
+class PantallaLed {
+  private:
+    LiquidCrystal_I2C lcd;
+
+  public:
+    PantallaLed(uint8_t addr, uint8_t cols, uint8_t rows) : lcd(addr, cols, rows) {}
+
+    void begin() {
+      lcd.init();
+      lcd.backlight();
+      lcd.setCursor(0, 0);
+      lcd.print("Iniciando...");
+      delay(2000);
+      lcd.clear();
+    }
+
+    void clear() {
+      lcd.clear();
+    }
+
+    void EscribirTemperatura(float temperatura) {
+      lcd.setCursor(0, 0);
+      lcd.print("Temp: ");
+      lcd.print(temperatura);
+      lcd.print(" C");
+    }
+
+    void EscribirHumedad(float humidity) {
+      lcd.setCursor(0, 1);
+      lcd.print("Hum: ");
+      lcd.print(humidity);
+      lcd.print(" %");
+    }
+};
+
+class WiFiManagerWrapper {
+  public:
+    void connect() {
+      WiFiManager wifiManager;
+      wifiManager.autoConnect("AutoConnectAP");
+      Serial.println("Connected to Wi-Fi!");
+    }
+};
+
+class AWSIoTCredentials {
+  public:
+    static void setupCredentials(WiFiClientSecure &wiFiClient) {
+      wiFiClient.setCACert(AMAZON_ROOT_CA1);
+      wiFiClient.setCertificate(CERTIFICATE);
+      wiFiClient.setPrivateKey(PRIVATE_KEY);
+    }
+};
+
+class MQTTManager {
+  private:
+    WiFiClientSecure &wiFiClient;
+    PubSubClient mqttClient;
+
+  public:
+    MQTTManager(WiFiClientSecure &client) : wiFiClient(client), mqttClient(client) {}
+
+    void setup() {
+      mqttClient.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
+      mqttClient.setCallback(callback);
+
+      Serial.print("Connecting to " + String(MQTT_BROKER_HOST));
+      if (mqttClient.connect(MQTT_CLIENT_ID)) {
+        Serial.println(" Connected!");
+        delay(100);
+        mqttClient.subscribe(UPDATE_DELTA_TOPIC);
+        Serial.println("Subscribed to " + String(UPDATE_DELTA_TOPIC));
+        delay(100);
+      }
+    }
+
+    void loop() {
+      if (mqttClient.connected()) {
+        mqttClient.loop();
+      } else {
+        Serial.println("MQTT broker not connected!");
+        delay(2000);
+      }
+    }
+
+    void publish(const char *topic, const char *message) {
+      mqttClient.publish(topic, message);
+    }
+
+    static void callback(const char *topic, byte *payload, unsigned int length) {
+      String message;
+      for (int i = 0; i < length; i++) message += String((char) payload[i]);
+      Serial.println("Message from topic " + String(topic) + ":" + message);
+
+      DeserializationError err = deserializeJson(inputDoc, payload);
+
+      if (!err) {
+        if (String(topic) == UPDATE_DELTA_TOPIC) {
+          temperaturaAws = inputDoc["state"]["desired"]["temperatura"].as<int8_t>();
+        }
+      }
+    }
+};
+
+SensorTemperatura sensor(DHTPIN, DHTTYPE);
+PantallaLed pantalla(I2C_ADDR, 16, 2);
+WiFiManagerWrapper wifiManager;
+WiFiClientSecure wiFiClient;
+MQTTManager mqttManager(wiFiClient);
+
+void reportTemperatura() {
+  outputDoc["state"]["reported"]["temperatura"] = temperaturaAws;
+  serializeJson(outputDoc, outputBuffer);
+  mqttManager.publish(UPDATE_TOPIC, outputBuffer);
+}
+
+void reportar(int temperatura) {
+  outputDoc["state"]["reported"]["temperatura"] = temperatura;
+  serializeJson(outputDoc, outputBuffer);
+  mqttManager.publish(UPDATE_TOPIC, outputBuffer);
+  temperaturaAws = inputDoc["state"]["desired"]["temperatura"].as<int8_t>();
+}
+
+void escribirEnPantalla(float temperatura) {
+  temperaturaAws = inputDoc["state"]["desired"]["temperatura"].as<int8_t>();
+  pantalla.EscribirTemperatura(temperatura);
+}
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(ledPinSDA, ledPinSCL);  
+  sensor.begin();  
+  pantalla.begin();
+  wifiManager.connect();
+  AWSIoTCredentials::setupCredentials(wiFiClient);
+  mqttManager.setup();
+  escribirEnPantalla(0);
+}
+
+void loop() {
+  float temperatura = sensor.leerTemperatura();
+  reportar(temperatura);
+  escribirEnPantalla(temperatura);
+  Serial.println(temperaturaAws);
+  delay(5000);
+  mqttManager.loop();
+}
